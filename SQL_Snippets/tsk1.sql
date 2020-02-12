@@ -47,3 +47,13 @@ users_with_address as (
 )
 
 -- О да, так гораздо лучше.
+CREATE TEMPORARY TABLE users_with_addresses as
+    SELECT 
+        u.id AS user_id, c.name AS city, r.name AS region, s.name AS country 
+    FROM 
+        case10.users AS u  
+        JOIN case10.addresses AS a ON u.id         = a.addressable_id 
+        JOIN case10.cities    AS c ON a.city_id    = c.id 
+        JOIN case10.regions   AS r ON c.region_id  = r.id
+        JOIN case10.countries AS s ON r.country_id = s.id
+

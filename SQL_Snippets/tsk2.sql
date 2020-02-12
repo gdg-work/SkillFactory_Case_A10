@@ -65,7 +65,7 @@ where
 
 
 -- Add country column for classification
-create temporary table t_uid_phone_country as
+create temporary table users_with_phone as
     with russian_phones as (
         select id,phone
         from case10.users
