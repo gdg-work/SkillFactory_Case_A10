@@ -1,8 +1,10 @@
-Российские и зарубежные пользователи сервиса
-=============================================
+= Российские и зарубежные пользователи сервиса
+:toc:
+:toclevels: 3
+:toc-title: Содержание
+:source-highlighter: highlightjs
 
-Как отличить отечественного пользователя от зарубежного?
--------------------------------------------------------------
+== Как отличить отечественного пользователя от зарубежного?
 
 Пользователь оставляет три кусочка информации, которые можно привязать к стране:
 
@@ -19,56 +21,62 @@
 
 === Классификация адресов
 
-~~~~~~~~~~~~~~~~~
-CREATE TEMPORARY TABLE users_with_addresses as
+[source,sql]
+----
+CREATE TEMPORARY TABLE c10_users_with_addresses as
     SELECT 
-        u.id AS user_id, c.name AS city, r.name AS region, s.name AS country 
+        u.id AS uid, c.name AS city, r.name AS region, s.name AS country 
     FROM 
         case10.users AS u  
         JOIN case10.addresses AS a ON u.id         = a.addressable_id 
         JOIN case10.cities    AS c ON a.city_id    = c.id 
         JOIN case10.regions   AS r ON c.region_id  = r.id
-        JOIN case10.countries AS s ON r.country_id = s.id
-~~~~~~~~~~~~~~~~~
+        JOIN case10.countries AS s ON r.country_id = s.id;
+----
 
 Проверяю, что табличка создалась:
 
-~~~~~~~~~~~~~~
-dgolub=> select * from users_with_addresses limit 2;
- user_id |   city    |               region               | country 
+[listing]
+----
+dgolub=> select * from c10_users_with_addresses limit 2;
+   uid   |   city    |               region               | country 
 ---------+-----------+------------------------------------+---------
   119414 | Lyantor   | Khanty-Mansiyskiy Avtonomnyy Okrug | Russia
   164276 | Serpukhov | MO                                 | Russia
 
-dgolub=> select * from users_with_addresses where country <> 'Russia' limit 2;
- user_id |  city   |   region    | country 
+dgolub=> select * from c10_users_with_addresses where country <> 'Russia' limit 2;
+   uid   |  city   |   region    | country 
 ---------+---------+-------------+---------
   170065 | Hadgāon | Maharashtra | India
   168259 | Narón   | Galicia     | Spain
-~~~~~~~~~~~~~~
+----
 
 Ок, эта часть классификатора готова.
 
 === Классификация телефонов
 
-Диапазоны для 
+Диапазоны для росийских телефонов взяты https://jasmi.ru/telefonnye-kody-stran-mira[из Сети],
+эти данные согласуются и с
+https://ru.wikipedia.org/wiki/%D0%A2%D0%B5%D0%BB%D0%B5%D1%84%D0%BE%D0%BD%D0%BD%D1%8B%D0%B5_%D0%BA%D0%BE%D0%B4%D1%8B_%D1%81%D1%82%D1%80%D0%B0%D0%BD#%D0%97%D0%BE%D0%BD%D0%B0_7[Википедией].
 
-~~~~~~~~~~~~~
-create temporary table users_with_phone as
+[source,sql]
+----
+create temporary table c10_users_with_phone as
     with russian_phones as (
-        select id,phone
+        select
+            id,  phone
         from case10.users
         where 
             (phone::text ~ '^7[34589].........$')    -- all 10-digit numbers with prefix 73, 74, 75, 78, 79
             and (phone::text !~ '^78[45]0')    -- except Abkhazia and South Osetia (SO)
             and (phone::text !~ '^7940')       -- except Abkhazia
-            and (phone::text !~ '^7995344')    -- except SO (ცხინვალი)
+            and (phone::text !~ '^7995344')    -- except SO
             and (phone::text !~ '^79971')      -- SO
             and (phone::text !~ '^799744')     -- SO
             and (phone::text !~ '^79976')      -- SO
     )
     select 
-        u.id, u.phone,
+        u.id as uid,  u.phone,
         case 
             when ru.phone is not null then 'Russia'
             else 'Foreign'
@@ -81,49 +89,79 @@ create temporary table users_with_phone as
     where
         u.phone is not null 
 ;
-~~~~~~~~~~~~~
+----
 
 Проверяю:
 
-~~~~~~~~~
-dgolub=> select * from users_with_phone limit 3;
-   id    |    phone    | country 
+-----------
+dgolub=> select * from c10_users_with_phone limit 3;
+  uid    |    phone    | country 
 ---------+-------------+---------
  1886022 | 79645822598 | Russia
  2019421 | 79625379259 | Russia
  1987320 | 79068740262 | Russia
 
-dgolub=> select * from users_with_phone where country <> 'Russia' limit 3;
-   id    |    phone     | country 
+dgolub=> select * from c10_users_with_phone where country <> 'Russia' limit 3;
+  uid    |    phone     | country 
 ---------+--------------+---------
  2370045 | 375297000000 | Foreign
  2185526 | 375297000000 | Foreign
  2382362 |   9513245729 | Foreign
-~~~~~~~~~
+-----------
 
-Вроде бы всё благополучно.
+Вроде бы всё благополучно.  Хотя есть странность: пользователи 2370045 и 2185526 разделяют один
+номер телефона.  А ещё есть такие пользователи?
+
+ dgolub=> select count(phone) - count(distinct phone) as shared_phones from c10_users_with_phone;
+ shared_phones 
+ ---------------
+      544
+
+Оказываается, таких пользователей много.  Можно ещё поинтересоваться, откуда они:
+
+.........
+ dgolub=> select phone, count(uid) as uids from c10_users_with_phone group by phone having count(uid) > 1  order by uids desc;
+    phone     | uids 
+ --------------+------
+ 375292000000 |   18
+ 380714000000 |   18
+ 375445000000 |   16
+ 375299000000 |   16
+ 375333000000 |   16
+ 375297000000 |   16
+ 375291000000 |   14
+ ...
+ 998944000000 |    2
+ 380688000000 |    2
+(159 rows)
+.........
+
+По всей видимости, эти аномалии в данных из-за того, что данные сгенерированные, а не реальные. Большая часть номеров принадлежит
+странам бывшего СССР, т.е. Украине, Белоруссии, Азербайджану, ...
 
 === Определение страны последнего входа по IP адресу
 
 Мне предстоит много запросов в большую таблицу диапазонов IP адресов,
 поэтому хорошей идеей будет её индексирование по IP:
 
-~~~~~~~~
+[source,sql]
+----
 CREATE INDEX ip2loc_from_idx ON case10.ip2location_db1 (ip_from);
 CREATE INDEX ip2loc_to_idx   ON case10.ip2location_db1 (ip_to);
-~~~~~~~~
+----
 
 Напоминаю, что я работаю с локальной базой и могу создавать в ней объекты без
 особых проблем.
 
-~~~~~~~~~~
-create temporary table users_with_geoip as
+[source,sql]
+----
+create temporary table c10_users_with_geoip as
 with
-    uid_ip as (
+    uid_ip as (  -- <1>
         select 
             id as uid, 
             last_sign_in_ip as ip_addr,
-            last_sign_in_ip::inet - '0.0.0.0'::inet as int_addr
+            last_sign_in_ip::inet - '0.0.0.0'::inet as int_addr -- <2>
         from 
            case10.users
     )
@@ -134,8 +172,11 @@ from
    uid_ip as u
    join
    case10.ip2location_db1  as geoip
-   on int_addr between ip_from and ip_to;
-~~~~~~~~~~
+   on int_addr between ip_from and ip_to; -- <3>
+----
+<1> Это CTE создаёт виртуальную таблицу "User ID | IP октетами | IP числом"
+<2> Преобразование адреса из октетов в BigInt
+<3> Поиск адресов в диапазоне.
 
 Табличка создаётся долго (на моей базе, которая работает в контейнере и ограничена  по
 ресурсам -- 7 минут).
@@ -144,48 +185,50 @@ from
 
 Проверяю, что получилось:
 
-~~~~~~~~
-dgolub=> select * from users_with_geoip limit 3;
+[listing]
+....
+dgolub=> select * from c10_users_with_geoip limit 3;
    uid   |    ip_addr     |  int_addr  |  ip_from   |   ip_to    |    country_name    
 ---------+----------------+------------+------------+------------+--------------------
  1886022 | 89.169.72.78   | 1504266318 | 1504247808 | 1504313343 | Russian Federation
  2403464 | 37.98.248.114  |  627243122 |  627240960 |  627245055 | Russian Federation
   367821 | 128.73.199.169 | 2152318889 | 2151940096 | 2152464383 | Russian Federation
 
-dgolub=> select * from users_with_geoip where country_name <> 'Russian Federation' limit 3;
+dgolub=> select * from c10_users_with_geoip where country_name <> 'Russian Federation' limit 3;
    uid   |    ip_addr     |  int_addr  |  ip_from   |   ip_to    |    country_name    
 ---------+----------------+------------+------------+------------+--------------------
  2283296 | 116.36.201.154 | 1948567962 | 1948254208 | 1949302783 | Korea, Republic of
  2318834 | 178.168.180.74 | 2997400650 | 2997387264 | 2997420031 | Belarus
  2370045 | 46.56.231.58   |  775481146 |  775421952 |  775487487 | Belarus
-~~~~~~~~
+....
 
 === Создание общего списка российских UID-ов
 
 Объединю для этого колонку UID всех трёх таблиц с адресами.
 
-~~~~~~
-create temporary table russian_users_ids as
-   select user_id as uid from users_with_addresses where country = 'Russia'
+[source,sql]
+-----------
+create temporary table c10_russian_users_ids as
+   select  uid from c10_users_with_addresses where country = 'Russia'
    union
-   select id as uid from users_with_phone where country = 'Russia'
+   select uid from c10_users_with_phone where country = 'Russia'
    union
-   select uid from users_with_geoip where country_name = 'Russian Federation'
+   select uid from c10_users_with_geoip where country_name = 'Russian Federation'
    order by uid;
-~~~~~~
+-----------
 
 В этот список придётся обращаться часто, поэтому проиндексирую его.
 
-~~~~~~
-dgolub=> create index russian_uids_idx on russian_users_ids (uid);
+-----------
+dgolub=> create index c10_russian_uids_idx on c10_russian_users_ids (uid);
 CREATE INDEX
-~~~~~~
+-----------
 
 Проверяю, что эта таблица работает:
 
-~~~~~~
-dgolub=> select * from users_with_address where not exists (
-    select uid from russian_users_ids where uid=user_id
+-----------
+dgolub=> select * from c10_users_with_addresses as a where not exists (
+    select uid from c10_russian_users_ids as ru  where a.uid=ru.uid
 );
 
  user_id |          city           |           region            |        country         
@@ -193,38 +236,614 @@ dgolub=> select * from users_with_address where not exists (
   170065 | Hadgāon                 | Maharashtra                 | India
   168259 | Narón                   | Galicia                     | Spain
   108773 | Riyadh                  | Ar Riyāḑ                    | Saudi Arabia
-....
+...
  2474656 | Petatlán                | Guerrero                    | Mexico
  2492617 | Kivertsi                | Volyn                       | Ukraine
  2492871 | Chuhuyiv                | Kharkiv                     | Ukraine
 (121 rows)
-~~~~~~
+-----------
 
 Аналогично проверяю с таблицей GeoIP:
 
-~~~~~~
-select * from users_with_geoip where not exists (
-    select uid from russian_users_ids 
-    where users_with_geoip.uid=russian_users_ids.uid
+[source, sql]
+----
+select * from c10_users_with_geoip where not exists (
+    select uid from c10_russian_users_ids 
+    where c10_users_with_geoip.uid=c10_russian_users_ids.uid
 );
-~~~~~~
+----
 
 Итак, создан список пользователей из России. Обратный список (иностранцев) нет смысла
 делать, одного списка тут достаточно.  Поиск идёт достаточно быстро (B-Tree).
 
 
-Когортный анализ российских пользователей
-------------------------------------------
+== Когортный анализ российских пользователей
 
 > Постройте когортный анализ по пользователям из России.
 > В каком месяце была максимальная конверсия в оплату из зарегистрировавшихся в
 > том же месяце? Учитывайте только месяцы, где было 100 и больше регистраций.
 
-Собираем когорты по месяцам, учитываем только российских пользователей и за основу берём
-поле `created_at` из таблицы `case10.users`.
+Собираем когорты по месяцам пока что для всех пользователей, за основу для когорт берём
+поле `created_at` из таблицы `case10.users`.  Количество пользователей ещё понадобится,
+поэтому сохраним во view `case10.users_count_by_cohort`.
 
+[source, sql]
+----
 select
-    count(id), date_trunc('month', created_at) as cohort
+    date_trunc('month', created_at)::date as cohort,
+    count(id) as registered_users
 from case10.users
 group by cohort
 order by cohort;
+----
+
+При выполнении этого запроса получаем таблицу количества зарегистрированных пользователей
+по когортам. Построив график по этой таблице, получаем:
+
+image::img/users_by_cohort.svg[График кол-ва пользователей по когортам 2010-2019]
+
+Разделим количество пользователей по когортам на российских и иностранных, для
+этого используем `exists` и ранее созданную таблицу `c10_russian_users_ids`;
+
+[source,sql]
+----
+-- !!!!
+create temporary view case10.russian_users_count_by_cohort
+select 
+    date_trunc('month', created_at)::date as cohort,
+    count(id) as registered_users
+from case10.users as u
+where
+    exists(select uid from c10_russian_users_ids as rui where rui.uid =  u.id) 
+group by cohort
+order by cohort;
+
+
+create temporary view case10.foreign_users_count_by_cohort
+select 
+    date_trunc('month', created_at)::date as cohort,
+    count(id) as registered_users
+from case10.users as u
+where
+    not exists(select uid from c10_russian_users_ids as rui where rui.uid =  u.id) 
+group by cohort
+order by cohort;
+----
+
+Далее понадобится таблица `carts`. Её размеры: 6 полей, 499989 строк. Судя по тому,
+что пользователей на порядок меньше, на пользователя приходится в среднем несколько
+транзакций. Проверяю:
+
+-----------
+dgolub=> select state, round(count(distinct id)*1./count(distinct user_id),2) as apc
+	 from case10.carts group by state;
+   state    | apc  
+------------+------
+ canceled   | 1.23
+ created    | 1.09
+ pending    | 2.13
+ successful | 1.74
+-----------
+
+Для начала построим на основе таблиц `case10.cart` и `case10.users` (виртуальную) таблицу такого формата:
+
+|===
+| user_id | cohort | buy_date  | lifetime
+|===
+
+Где `buy_date` будет датой события `purchased_at` корзинки, а lifetime разницей в месяцах между датой
+покупки и датой регистрации.  В этот раз я не буду относить все покупки к дате первой покупки для
+заданного клиента, а буду учитывать их в тех месяцах, когда они произошли.
+
+[source,sql]
+----
+select 
+    user_id, 
+    date_trunc('month', u.created_at)::date as cohort, 
+    purchased_at, 
+    (c.purchased_at::date - u.created_at::date) as lifetime
+from 
+    case10.carts as c
+    join case10.users as u on c.user_id = u.id
+where exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid);
+----
+
+Но здесь получается разница в днях, а для анализа нам нужны месяцы. Думаем дальше.
+
+
+> постройте когортный анализ по пользователям из России.
+
+Для когортного анализа нужно как-то перевести временные промежутки (типа 'interval') в целые месяцы.
+
+Нашёл в https://stackoverflow.com/questions/14251456/months-between-two-dates-function[треде на Stack Overflow]
+решение с созданием пользовательских функций:
+
+[source,sql]
+----
+create function months_of(interval)
+ returns int strict immutable language sql as $$
+  select extract(years from $1)::int * 12 + extract(month from $1)::int
+$$;
+
+create function months_between(date, date)
+ returns int strict immutable language sql as $$
+   select abs(months_of(age($1, $2)))
+$$;
+----
+
+Теперь используем эти функции при расчёте лайфтайма.
+
+Заполнение данных о когортах:
+
+[source,sql]
+----
+select
+    date_trunc('month', u.created_at)::date as cohort, 
+    months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+    user_id as uid,
+    purchased_at
+from
+    case10.carts as c
+    join case10.users as u on c.user_id = u.id
+    join c10_russian_users_ids as rui on c.user_id = rui.uid
+where
+    c.state = 'successful';
+----
+
+В результате такого запроса получается:
+
+.Когорты и покупки российских пользователей (обрезано)
+|===
+|   cohort   | lifetime |  uid   |      purchased_at       
+
+| 2016-01-01 |        0 | 504197 | 2016-01-06 19:17:39.28
+| 2015-09-01 |        0 | 301891 | 2015-10-13 18:59:55.905
+| 2015-09-01 |        2 | 247529 | 2015-11-09 16:53:09.951
+| 2015-01-01 |       10 | 106958 | 2015-11-14 13:33:57.959
+| 2015-10-01 |        0 | 410873 | 2015-11-01 15:13:00.939
+| ...
+|===
+
+Далее этот запрос можно использовать как подзапрос с помощью CTE. Делать View нет
+особого смысла, так как непосредственно он использоваться не будет.  Подсчитаем количество
+покупателей из России и иностранных:
+
+[source,sql]
+----
+with  buyers_with_cohort_and_date as (
+select
+    date_trunc('month', u.created_at)::date as cohort, 
+    months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+    user_id as uid,
+    purchased_at
+from
+    case10.carts as c
+    join case10.users as u on c.user_id = u.id
+where
+    c.state = 'successful'
+    and
+    exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+)
+select count(distinct uid) from buyers_with_cohort_and_date;
+----
+
+Аналогично для иностранцев `exists` меняется на `not exists`:
+
+[source,sql]
+----
+with  foreign_buyers_with_cohort_and_date as (
+select
+    date_trunc('month', u.created_at)::date as cohort, 
+    months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+    user_id as uid,
+    purchased_at
+from
+    case10.carts as c
+    join case10.users as u on c.user_id = u.id
+where
+    c.state = 'successful'
+    and
+    not exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+)
+select count(distinct uid) from buyers_with_cohort_and_date;
+----
+
+Запрос количества российских покупателей выдаёт 3146, иностранных: 48.
+
+
+Подсчёт транзакций российских пользователей по когортам становится элементарным при 
+использовании определённого выше CTE (лимит установлен для демонстрации работы запроса).
+
+[source,sql]
+----
+with  buyers_with_cohort_and_date as (
+select
+    date_trunc('month', u.created_at)::date as cohort, 
+    months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+    user_id as uid,
+    purchased_at
+from
+    case10.carts as c
+    join case10.users as u on c.user_id = u.id
+where
+    c.state = 'successful'
+    and
+    exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+)
+select
+    cohort,
+    lifetime,
+    count(distinct uid) as buyers, 
+    count(purchased_at) as transactions 
+from
+    buyers_with_cohort_and_date
+group by cohort,lifetime
+limit 5;
+----
+
+
+Результат:
+
+.Суммирование покупателей и транзацкий по когортам и времени жизни
+|====
+|   cohort   | lifetime | buyers | transactions 
+
+| 2011-10-01 |       48 |      1 |            1
+| 2011-10-01 |       54 |      1 |            2
+| 2012-01-01 |       44 |      1 |            2
+| 2012-08-01 |       50 |      1 |            1
+| 2012-08-01 |       55 |      1 |            1
+|====
+
+Для подсчёта конверсии необходимо добавить в эту таблицу количество зарегистрированных пользователей
+по когортам.  Используем определённые выше запросы в CTE.
+
+[source,sql]
+----
+create view cohorts_transactions as
+    with  buyers_with_cohort_and_date as (
+    select
+        date_trunc('month', u.created_at)::date as cohort, 
+        months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+        user_id as uid,
+        purchased_at
+    from
+        case10.carts as c
+        join case10.users as u on c.user_id = u.id
+    where
+        c.state = 'successful'
+        and
+        exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+    ),
+    transactions_by_cohort as (
+    select
+        cohort,
+        lifetime,
+        count(distinct uid) as buyers, 
+        count(purchased_at) as transactions 
+    from
+        buyers_with_cohort_and_date
+    group by cohort,lifetime
+    )
+select 
+    tbc.cohort, 
+    uc.count as registered_users,
+    lifetime,
+    buyers,
+    transactions
+from 
+    transactions_by_cohort as tbc
+    join case10.users_count_by_cohort as uc on (uc.cohort::date = tbc.cohort)
+order by cohort,lifetime;
+----
+
+.Пример результата:
+[listing]
+----
+dgolub=> select * from cohorts_transactions limit 3;
+       cohort        | registered_users | lifetime | buyers | transactions 
+---------------------+------------------+----------+--------+--------------
+ 2011-10-01 00:00:00 |                2 |       48 |      1 |            1
+ 2011-10-01 00:00:00 |                2 |       54 |      1 |            2
+ 2012-01-01 00:00:00 |                2 |       44 |      1 |            2
+----
+
+Суммируем покупателей из колонки `buyers`, получаем 5632, что явно больше, чем
+суммарное количество покупателей в таблице `carts`.  Очевидно, какие-то покупатели
+учитываются больше одного раза, так как они совершали покупки в разные недели.
+Нужно преобразовать выдачу CTE 'transactions_by_cohort' так, чтобы покупатель в
+ ней фигурировал один раз, при первой транзакции.
+Количество транзакций можно не учитывать, оно в  анализе использоваться не будет.
+
+Переписал запрос таким образом:
+
+[source,sql]
+----
+create view ru_cohorts_transactions as
+with 
+    buyers_with_cohort_and_date as (  -- <1>
+        select
+            date_trunc('month', u.created_at)::date as cohort, 
+            months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+            user_id as uid,
+            purchased_at
+        from
+            case10.carts as c
+            join case10.users as u on c.user_id = u.id
+        where
+            c.state = 'successful'
+            and
+            exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+    ),
+    clients_first_buy as ( -- <2>
+        select
+            cohort,
+            min(lifetime) as lifetime,
+            uid,
+            min(purchased_at) as first_buy,
+            count(purchased_at) as transactions_count
+        from buyers_with_cohort_and_date
+        group by cohort,uid
+    ),
+    transactions_by_cohort as ( -- <3>
+        select
+            cohort,
+            lifetime,
+            count(distinct uid) as buyers, 
+            sum(transactions_count) as transactions 
+        from
+            clients_first_buy
+        group by cohort, lifetime
+    )
+select -- <4>
+    tbc.cohort, 
+    uc.count as registered_users,
+    lifetime,
+    buyers,
+    transactions,
+    transactions*1.0/buyers as apc,  -- <5>
+    buyers*1.0/uc.count as conversion
+from 
+    transactions_by_cohort as tbc
+    join case10.users_count_by_cohort as uc on (uc.cohort::date = tbc.cohort)
+order by cohort, lifetime;
+----
+
+<1> Добавляет к UID и времени покупки из корзины когорту и время жизни и фильтрует, 
+оставляя только российских пользователей.
+
+<2> Оставляет для каждого клиента только дату первой покупки (и соответствуюий lifetime),
+остальные покупки сводит в колонку `transactions_count`.
+
+<3> Суммирует покупателей и тразнакции по когортам и времени жизни
+
+<4> Добавляет информацию о числе зарегистрированных пользователей в когортах.
+
+<5> Расчёт числа покупок на клиента и конверсии.
+
+> В каком месяце была максимальная конверсия из пользователей в покупателей?
+
+[source,sql]
+----
+select *, 
+    round(buyers*1.0/registered_users,3) as conversion,
+    round(transactions*1.0/buyers,3) as apc
+from cohorts_transactions
+where
+    registered_users > 100
+    and lifetime = 0
+order by conversion desc
+limit 5;
+----
+
+.Результат
+----
+       cohort        | registered_users | lifetime | buyers | transactions | conversion |  apc  
+---------------------+------------------+----------+--------+--------------+------------+-------
+ 2018-08-01 00:00:00 |              294 |        0 |     99 |          109 |      0.337 | 1.101
+ 2018-05-01 00:00:00 |              285 |        0 |     93 |          106 |      0.326 | 1.140
+ 2018-07-01 00:00:00 |              171 |        0 |     49 |           54 |      0.287 | 1.102
+ 2018-06-01 00:00:00 |              340 |        0 |     92 |           97 |      0.271 | 1.054
+ 2016-06-01 00:00:00 |              354 |        0 |     83 |          100 |      0.234 | 1.205
+----
+
+Видно, что максимальная конверсия случилась в августе 2018 года.
+
+Сохраню вывод запроса в CSV для импорта в таблицу или обработки с помощью Python:
+
+[source,sql]
+----
+\copy (select *,  round(buyers*1.0/registered_users,3) as conversion, round(transactions*1.0/buyers,3) as apc
+    from cohorts_transactions ) to '/tmp/conversion_by_cohort_and_lt.csv' with csv header;
+----
+
+Тут всё нужно записать в одну строку, иначе синтаксическая ошибка.
+
+В результате в файле `/tmp/conversion_by_cohort_and_lt.csv` получаем:
+
+[listing]
+....
+ cohort,registered_users,lifetime,buyers,transactions,conversion,apc
+ 2011-10-01 00:00:00,2,48,1,1,0.500,1.000
+ 2011-10-01 00:00:00,2,54,1,2,0.500,2.000
+ 2012-01-01 00:00:00,2,44,1,2,0.500,2.000
+ ...
+....
+
+> Когорта какого месяца показывает максимальную «раскрываемость» (т.е. суммарную
+> конверсию в оплату по всем месяцам)? Учитывайте только месяцы, где было 100 и больше
+> регистраций. Введите ответ в формате «ГГГГ-ММ».
+
+Переводя на понятный -- нужно посчитать конверсию для когорты в целом, не дробя её на ячейки по Lifetime.
+Создам для этого view, так как буду использовать эти данные в дальнейшем.
+
+[source,sql]
+----
+create view c10_total_conversion_by_cohort as
+with 
+    transactions_by_cohort as (
+    select
+        date_trunc('month', u.created_at)::date as cohort, 
+        count(distinct c.user_id) as buyers, 
+        count(purchased_at) as transactions 
+    from
+        case10.carts as c
+        join case10.users as u on c.user_id = u.id
+        join c10_russian_users_ids as rui on c.user_id = rui.uid
+    where c.state = 'successful'
+    group by cohort
+    )
+select 
+    cohort, 
+    uc.count as registered_users,
+    buyers,
+    transactions,
+    round(buyers*1.0/uc.count,3) as conversion,
+    round(transactions*1.0/buyers,3) as apc 
+from 
+    transactions_by_cohort as tbc
+    join case10.users_count_by_cohort as uc using (cohort)
+order by cohort;
+----
+
+Получив такое представление, можем ответить на вопрос с помощью элементарной выборки:
+
+[listing]
+....
+dgolub=> select cohort,conversion from c10_total_conversion_by_cohort where registered_users > 99 order by conversion desc limit 5; 
+        cohort        | conversion 
+ ---------------------+------------
+  2016-06-01 00:00:00 |      0.506
+  2017-04-01 00:00:00 |      0.383
+  2015-06-01 00:00:00 |      0.380
+  2018-08-01 00:00:00 |      0.374
+  2018-05-01 00:00:00 |      0.361
+....
+
+Итак, максимальная раскрываемость была у когорты июля 2016 года.
+
+
+== Когортный анализ по иностранным пользователям.
+
+Для российских пользователей мы использовали выражение:
+
+[source,sql]
+----
+select
+    user_id,
+    date_trunc('month', u.created_at)::date as cohort,
+    purchased_at,
+    (c.purchased_at::date - u.created_at::date) as lifetime
+from case10.carts as c join case10.users as u on c.user_id = u.id
+join c10_russian_users_ids as rui on c.user_id = rui.uid
+----
+
+Чтобы не создавать отдельную таблицу иностранных пользователей, можем использовать выражение
+`where not exits` со вложенным селектом.  Примерно так:
+
+[source,sql]
+----
+select
+    user_id,
+    date_trunc('month', u.created_at)::date as cohort,
+    purchased_at,
+    (c.purchased_at::date - u.created_at::date) as lifetime
+from case10.carts as c join case10.users as u on c.user_id = u.id
+where not exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+----
+
+Выражение для таблицы только успешных корзинок, созданных участниками разных когорт не из России:
+
+[source,sql]
+----
+create view foreign_cohorts_transactions as
+with
+    transactions_by_cohort as (
+    select
+        date_trunc('month', u.created_at)::date as cohort,
+        months_between(c.purchased_at::date, u.created_at::date) as lifetime,
+        count(distinct c.user_id) as buyers,
+        count(purchased_at) as transactions
+    from
+        case10.carts as c
+        join case10.users as u on c.user_id = u.id
+    where
+        not exists (select uid from c10_russian_users_ids as rui where c.user_id = rui.uid)
+        and c.state = 'successful'
+    group by cohort,lifetime
+    )
+select
+    cohort,
+    uc.count as registered_users,
+    lifetime,
+    buyers,
+    transactions
+from
+    transactions_by_cohort as tbc
+    join case10.users_count_by_cohort as uc using (cohort)
+order by cohort,lifetime;
+----
+
+Расчитываем конверсию по когортам:
+
+[source,sql]
+----
+select *, 
+    round(buyers*1.0/registered_users,3) as conversion,
+    round(transactions*1.0/buyers,3) as apc
+from foreign_cohorts_transactions
+where
+    registered_users > 100
+order by conversion desc;
+----
+
+Запустив это выражение, получим в выдаче всего 76 строк, верхние пять из которых:
+
+.Максимальная конверсия среди зарубежных пользователей
+|===
+|       cohort        | registered_users | lifetime | buyers | transactions | conversion |  apc  
+
+| 2017-04-01 00:00:00 |              120 |       16 |      1 |            2 |      0.008 | 2.000
+| 2017-04-01 00:00:00 |              120 |        0 |      1 |            1 |      0.008 | 1.000
+| 2017-04-01 00:00:00 |              120 |       14 |      1 |            1 |      0.008 | 1.000
+| 2017-04-01 00:00:00 |              120 |       11 |      1 |            3 |      0.008 | 3.000
+| 2017-04-01 00:00:00 |              120 |       12 |      1 |            1 |      0.008 | 1.000
+|===
+
+Можно сделать вывод, что конверсия по иностранным пользователям очень мала.  Проверим, что мы корректно
+выделили российских и иностранных пользователей, для чего просуммируем количество покупателей в нашей
+таблице, а также получим его независимо из таблицы `case10.cart`.
+
+
+[listing]
+....
+dgolub=> select sum(buyers) from foreign_cohorts_transactions ;  sum 
+-----
+  99
+
+dgolub=> select sum(buyers) from cohorts_transactions;
+ sum  
+------
+ 5362
+
+dgolub=> select count(distinct user_id) from case10.carts as c  where c.purchased_at is not null;
+ count 
+-------
+ 86125
+....
+
+Уупс! .footnote[любимое словечко физиков-ядерщиков.]  Пользователей-то у нас всего 50 тысяч, очевидно,
+в таблице carts есть `user_id`, которых нет в таблице `users`?  Делаем join carts и users, смотрим.
+
+[listing]
+....
+dgolub=> select count(distinct user_id)
+    from case10.carts as c join case10.users as u on c.user_id=u.id
+    where c.state = 'successful';
+ count 
+-------
+  3194
+....
+
+Что-то не сходится, суммарное количество покупателей в таблицах `foreign_cohorts_transactions` и `cohorts_transactions`
+5461.
