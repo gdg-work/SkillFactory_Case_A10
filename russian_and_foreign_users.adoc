@@ -2,7 +2,18 @@
 :toc:
 :toclevels: 3
 :toc-title: Содержание
+ifdef::env-github[]
+:source-highlighter: pygments
 :src: sql
+-- :src: https://github.com/gdg-work/SkillFactory_Case_A10/tree/master/sql
+:imgdir: img
+endif::[]
+ifndef::env-github[]
+:source-highlighter: highlightjs
+:src: sql
+:imgdir: img
+endif::[]
+
 :icons: font
 
 == Как отличить отечественного пользователя от зарубежного?
