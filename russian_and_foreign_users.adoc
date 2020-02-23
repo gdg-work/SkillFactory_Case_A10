@@ -2,7 +2,6 @@
 :toc:
 :toclevels: 3
 :toc-title: Содержание
-:source-highlighter: highlightjs
 :src: sql
 :icons: font
 
