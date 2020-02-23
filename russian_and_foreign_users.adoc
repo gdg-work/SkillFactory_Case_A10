@@ -4,7 +4,7 @@
 :toc-title: Содержание
 ifdef::env-github[]
 :source-highlighter: pygments
-:src: https://github.com/gdg-work/SkillFactory_Case_A10/tree/master/sql
+:src: /gdg-work/SkillFactory_Case_A10/tree/master/sql
 :imgdir: img
 endif::[]
 ifndef::env-github[]
@@ -271,8 +271,6 @@ dgolub=> select state, round(count(distinct id)*1./count(distinct user_id),2) as
 Где `purchased_at` будет датой покупки для корзины, а lifetime разницей в месяцах между датой
 покупки и датой регистрации.  В этот раз я не буду относить все покупки к дате первой покупки для
 заданного клиента, а буду учитывать их в тех месяцах, когда они произошли.
-
-!!! Позже это будет переделано - сделай ссылку
 
 [source,sql]
 ----
