@@ -4,8 +4,7 @@
 :toc-title: Содержание
 ifdef::env-github[]
 :source-highlighter: pygments
-:src: sql
--- :src: https://github.com/gdg-work/SkillFactory_Case_A10/tree/master/sql
+:src: https://github.com/gdg-work/SkillFactory_Case_A10/tree/master/sql
 :imgdir: img
 endif::[]
 ifndef::env-github[]
