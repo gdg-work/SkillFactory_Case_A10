@@ -1,4 +1,4 @@
 name: russian-and-foreign-users
 title: Когортный анализ по российским и зарубежным пользователям
 version: master
-start_page: ROOT/index
+start_page: ROOT/russian_and_foreign_users
