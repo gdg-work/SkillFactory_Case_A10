@@ -1,10 +1,12 @@
 site:
     title: Когортный анализ российских и зарубежных пользователей (SkillFactory SDA-5 Case A-10)
     url: https://gdg-skillfactory-case-a10.netlify.com/
-    start_page: SkillFactory_Case_A10::russian_and_foreign_users.adoc
+    start_page: ROOT::russian_and_foreign_users.adoc
 content:
-    sources: https://github.com/gdg-work/SkillFactory_Case_A10.git
-    branches: master
+    sources:
+        - url: https://github.com/gdg-work/SkillFactory_Case_A10.git
+    branches:
+        - master
 ui:
     bundle:
         url: https://deepsymmetry.org/media/antora/ui-bundle.zip
